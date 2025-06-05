@@ -1,0 +1,48 @@
+!pip install langchain langchain-community langchain-cohere
+!pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
+!pip install cohere
+
+import os
+from kaggle_secrets import UserSecretsClient
+
+user_secrets = UserSecretsClient()
+
+cohere_api_key = user_secrets.get_secret("COHERE_API_KEY")
+
+os.environ["COHERE_API_KEY"] = cohere_api_key
+
+
+!pip install gdown
+!gdown --id 1ISi1BiXuDagZi3u9_MIFsPuPQcOcQBtS
+
+
+text_content = ''
+with open('/kaggle/working/Data.txt', 'r', encoding='utf-8') as file:
+    text_content = file.read()
+    print(text_content)
+
+
+from langchain_cohere import ChatCohere
+from langchain_cohere.llms import Cohere
+
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.documents import Document
+from langchain.chains.combine_documents import ( create_stuff_documents_chain,)
+
+llm = ChatCohere(
+    cohere_api_key = cohere_api_key, model="c4ai-aya-expanse-8b"
+)
+
+print(text_content)
+prompt = ChatPromptTemplate.from_messages(
+    [("human","What are power levels in Thallan?:\n{context}")]
+)
+
+chain = create_stuff_documents_chain(llm, prompt)
+
+docs = [
+    Document(page_content = text_content)
+]
+chain.invoke({"context": docs})
+
+
