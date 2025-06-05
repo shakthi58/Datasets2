@@ -1,0 +1,104 @@
+!pip install langchain langchain-community langchain-groq
+!pip install groq
+!pip install PyMuPDF faiss-cpu requests
+
+
+from kaggle_secrets import UserSecretsClient
+
+user_secrets = UserSecretsClient
+user_secrets = UserSecretsClient()
+
+groq_api_key = user_secrets.get_secret("GROQ_API_KEY")
+
+os.environ["GROQ_API_KEY"] = groq_api_key
+
+
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_groq import ChatGroq
+
+llm = ChatGroq(model_name="llama-3.3-70b-versatile", api_key = groq_api_key)
+llm
+
+
+import fitz
+
+def extract_text_from_pdf(pdf_path):
+    doc = fitz.open(pdf_path)
+    text = ""
+    for page in doc:
+        text  += page.get_text("text") + "\n"
+    return text
+
+
+pdf_text = extract_text_from_pdf("/kaggle/input/ipc-document/ipc.pdf")
+print("Extracted text from IPC PDF:", len(pdf_text), "characters")
+
+
+import faiss
+import numpy as np
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from sentence_transformers import SentenceTransformer
+
+hf_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+def create_faiss_index(text):
+    """Chunks IPC text and store embeddings in FAISS"""
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    texts = text_splitter.split_text(text)
+    embeddings = hf_model.encode(texts)
+
+    d = embeddings.shape[1]
+    index = faiss.IndexFlatL2(d)
+    index.add(np.array(embeddings))
+
+    return index, texts
+
+
+ipc_faiss_index, ipc_chunks = create_faiss_index(pdf_text)
+print("FAISS Index created with", len(ipc_chunks), "chunks")
+
+
+def retrieve_ipc_section(query):
+    query_embedding = hf_model.encode([query])
+    distances, indices = ipc_faiss_index.search(np.array(query_embedding), k=1)
+    return ipc_chunks[indices[0][0] if indices[0][0] < len(ipc_chunks) else "No relevant section found"]
+
+query = "what is the punishment for theft under IPC?"
+retrieved_section = retrieve_ipc_section(query)
+print("\nRelevant IPC Section:\n", retrieved_section)
+
+
+prompt = PromptTemplate(
+    input_variable=["ipc_section","query"],
+    template="""
+    You are an expert in Indian Law. A user asked: "{query}"
+    Based on the Indian Penal Code (IPC), the relevant section is:
+    {ipc_section}
+
+    Please provide:
+    - A simple explanation
+    - The key legal points
+    - Possible punishments
+    - A real world example
+    """
+)
+
+def query_groq(prompt):
+    response = chain.run()
+    print(response)
+    return response
+
+def ipc_chatbot(query):
+    related_section = retrieve_ipc_section(query)
+    chain = LLMChain(llm=llm, prompt=prompt)
+    response = chain.run(ipc_section=related_section, query=query)
+    return response
+
+
+user_query = input("Enter your legal question: ")
+chatbot_response = ipc_chatbot(user_query)
+print(chatbot_response)
+
+
