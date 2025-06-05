@@ -1,0 +1,85 @@
+!pip install langchain langchain-community langchain-groq
+!pip install wikipedia pydantic
+!pip install groq
+
+
+import os
+from kaggle_secrets import UserSecretsClient
+
+user_secrets = UserSecretsClient()
+
+groq_api_key = user_secrets.get_secret("GROQ_API_KEY")
+
+os.environ["GROQ_API_KEY"] = groq_api_key
+
+
+from pydantic import BaseModel, Field
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_groq import ChatGroq
+from langchain.output_parsers import PydanticOutputParser
+
+from typing import Optional
+import re
+import groq
+
+
+class InstitutionInfo(BaseModel):
+    name: str = Field(..., description="Name of the institution.")
+    founder: Optional[str] = Field(None, description="Founder of the institution.")
+    founded_Year: Optional[str] = Field(None, description="Year the institution was founded.")
+    branches: Optional[str] = Field(None, description="Current branches in the institution.")
+    employees: Optional[str] = Field(None, description="Number of employees.")
+    summary: Optional[str] = Field(None, description="Brief 4-line summary of the institution.")
+
+
+def parse_wikipedia_content(content: str) -> InstitutionInfo:
+    founder_match = re.search(r'(?i)founder[s]*[:\-\s]+([^\n\r]*)', content)
+    founded_match = re.search(r'(?i)founded[:\-\s]+(\d{4})', content)
+    branches_match = re.search(r'(?i)campus|branches[:\-\s]+([^\n\r]*)', content)
+    employees_match = re.search(r'(?i)staff|employees[:\-\s]+([\d,])', content)
+
+    summary = " ".join(content.split(". ")[:4]) + "."
+    return InstitutionInfo(
+        name="Unknown",
+        founder = founder_match.group(1) if founder_match else "Not Available",
+        founded_year = founded_match.group(1) if founded_match else "Not Available",
+        branches = branches_match.group(1) if branches_match else "Not Available",
+        employees = employees_match.group(1) if employees_match else "Not Available",
+        summary = summary
+    )
+
+
+def fetch_institution_info(institution_name: str) -> InstitutionInfo:
+    try:
+        page_content = wikipedia.page(institution_name).content
+        institution_info = parse_wikipedia_content(page_content)
+        return institution_info
+    except wikipedia.exceptions.PageError:
+        return InstitutionInfo(name=institution_name, summary="No Wikipedia page found")
+    except wikipedia.exceptions.DisambiguousError as e:
+        return InstitutionInfo(name=institution_name, summary=f"Multiple results found: {e.options[:5]}")
+
+
+llm = ChatGroq(model_name="llama-3.3-70b-versatile", api_key = groq_api_key)
+prompt = PromptTemplate(
+    input_variables=["institution_name"],
+    template = """
+    Extract the following details about {institution_name} from Wikipedia:
+    - Founder
+    - Founded Year
+    - Current Branches
+    - Number of Employees
+    - A Brief 4 Line Summary
+    """
+)
+
+chain = LLMChain(llm=llm, prompt=prompt)
+output_parser = PydanticOutputParser(pydantic_object=InstitutionInfo)
+
+institution_name = 'Massachussets Institute of Technology'
+response = chain.run(institution_name=institution_name, output_parser=output_parser)
+print(response)
+
+
